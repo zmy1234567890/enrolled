@@ -1,0 +1,47 @@
+#include <math.h>
+
+float calculate_phase_diff(float *signal1, float *signal2, int maxIndex) {
+    // 计算信号1和信号2在主频位置的相位
+    float phase1 = atan2(signal1[2 * maxIndex + 1], signal1[2 * maxIndex]);
+    float phase2 = atan2(signal2[2 * maxIndex + 1], signal2[2 * maxIndex]);
+    
+    // 计算相位差
+    float phase_diff = phase1 - phase2;
+    
+    // 保证相位差在[-π, π]范围内
+    if (phase_diff > M_PI) {
+        phase_diff -= 2 * M_PI;
+    } else if (phase_diff < -M_PI) {
+        phase_diff += 2 * M_PI;
+    }
+    
+    return phase_diff;  // 返回相位差
+}
+
+float calculate_thd(float *magnitude, int fft_size, float threshold) {
+    float fundamental = magnitude[1];  // 基波幅度
+    float harmonic_sum = 0.0f;
+
+    // 累加谐波（高次频率分量）
+    for (int i = 2; i < fft_size / 2; i++) {
+        if (magnitude[i] > threshold) {
+            harmonic_sum += magnitude[i] * magnitude[i];  // 计算每个谐波的幅度平方
+        }
+    }
+
+    // THD计算公式
+    float thd = sqrtf(harmonic_sum) / fundamental;
+    return thd;
+}
+
+float calculate_amplitude_ratio(float *magnitude1, float *magnitude2, int maxIndex) {
+    float amplitude1 = magnitude1[maxIndex];  // 信号1的幅度
+    float amplitude2 = magnitude2[maxIndex];  // 信号2的幅度
+    
+    // 计算幅度比值
+    if (amplitude2 != 0) {
+        return amplitude1 / amplitude2;  // 返回幅度比值
+    } else {
+        return 0;  // 如果信号2的幅度为0，返回0（避免除零错误）
+    }
+}
