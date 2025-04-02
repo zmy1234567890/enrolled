@@ -160,7 +160,7 @@ void calculate_amplitude(float* rms, float* peak) {//求幅度
 }
 
 // **4. 识别波形类型**
-const char* identify_waveform() {
+/*const char* identify_waveform() {
     int harmonic_count = 0;
     float base_amp = magnitude[1];  // 基波幅度
     float threshold = base_amp * 0.1f;  // 设定阈值
@@ -178,6 +178,42 @@ const char* identify_waveform() {
         return "方波";
     } else {
         return "三角波";
+    }
+}
+*/
+const char* identify_waveform() {
+    int fundamental_index = 1;
+    float max_magnitude = magnitude[1];
+    
+    // 1. 寻找最大幅值对应的索引（主频索引）
+    for (int i = 2; i < FFT_SIZE / 2; i++) {
+        if (magnitude[i] > max_magnitude) {
+            max_magnitude = magnitude[i];
+            fundamental_index = i;
+        }
+    }
+    
+    // 2. 计算基波频率
+    float fundamental_freq = (fundamental_index * SAMPLE_RATE) / FFT_SIZE;
+    
+    // 3. 设定谐波判定阈值（基波的10%）
+    float threshold = max_magnitude * 0.1f;
+    int harmonic_count = 0;
+    
+    // 4. 计算谐波个数（从2倍频开始判断）
+    for (int i = 2 * fundamental_index; i < FFT_SIZE / 2; i += fundamental_index) {
+        if (magnitude[i] > threshold) {
+            harmonic_count++;
+        }
+    }
+    
+    // 5. 波形判断
+    if (harmonic_count == 0) {
+        return "正弦波"; // 只有基波，没有显著谐波
+    } else if (harmonic_count > 5) {
+        return "方波"; // 方波的谐波较多
+    } else {
+        return "三角波"; // 三角波的谐波衰减较快
     }
 }
 /* USER CODE END 0 */
