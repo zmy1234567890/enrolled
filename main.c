@@ -99,6 +99,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 	}
 }
 
+//高贵的窗口函数
+float window[SIZE];
+for (int i = 0; i < SIZE; i++) {
+    window[i] = 0.5f * (1.0f - cosf(2 * M_PI * i / (SIZE - 1)));
+}
+
 void calculate_magnitude() {
     for (int i = 0; i < FFT_SIZE / 2; i++) {
         float real = output_signal[2 * i];       // 实部
@@ -121,6 +127,8 @@ float find_max_frequency() {
 
 void process_signal() {
     // **执行 FFT**
+	
+  apply_hanning_window(input, FFT_SIZE);
     arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
     arm_rfft_fast_f32(&fft_instance, input_signal, output_signal, 0);
 
@@ -181,7 +189,7 @@ void calculate_amplitude(float* rms, float* peak) {//求幅度
     }
 }
 */
-const char* identify_waveform() {
+ /*const char* identify_waveform() {
     int fundamental_index = 1;
     float max_magnitude = magnitude[1];
     
@@ -215,7 +223,43 @@ const char* identify_waveform() {
     } else {
         return "三角波"; // 三角波的谐波衰减较快
     }
+}*/
+const char* identify_waveform() {
+    int harmonic_count = 0;
+
+    // 1. 找到基波索引（跳过直流分量）
+    int base_index = 1;
+    float base_amp = magnitude[1];
+
+    for (int i = 2; i < FFT_SIZE / 2; i++) {
+        if (magnitude[i] > base_amp) {
+            base_amp = magnitude[i];
+            base_index = i;
+        }
+    }
+
+    float threshold = base_amp * 0.1f;
+
+    // 2. 判断谐波（2~5次谐波是否大于阈值）
+    for (int i = 2; i <= 5; i++) {
+        int idx = base_index * i;
+        if (idx >= FFT_SIZE / 2) break;
+        if (magnitude[idx] > threshold) {
+            harmonic_count++;
+        }
+    }
+
+    // 3. 识别波形
+    if (harmonic_count == 0) {
+        return "正弦波";
+    } else if (harmonic_count >= 3) {
+        return "方波";
+    } else {
+        return "三角波";
+    }
 }
+
+
 /* USER CODE END 0 */
 
 /**
