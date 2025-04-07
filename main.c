@@ -42,7 +42,7 @@
 #define ADC_BUF_SIZE 1024  // FFT 输入大小（必须是 2 的幂）
 #define SAMPLING_RATE 112903  // 实际采样率，单位 Hz
 float magnitude[FFT_SIZE / 2];//// 幅度数组
-
+float window[FFT_SIZE];//窗口数组
 
 uint32_t adc_buf[ADC_BUF_SIZE];  // ADC DMA 缓冲区
 float input_f32[ADC_BUF_SIZE];   // FFT 输入缓冲区
@@ -100,9 +100,20 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 }
 
 //高贵的窗口函数
-float window[SIZE];
-for (int i = 0; i < SIZE; i++) {
-    window[i] = 0.5f * (1.0f - cosf(2 * M_PI * i / (SIZE - 1)));
+//float window[FFT_SIZE];
+
+// 1. 生成 Hanning 窗口
+void generate_hanning_window() {
+    for (int i = 0; i < FFT_SIZE; i++) {
+        window[i] = 0.5f * (1.0f - cosf(2 * PI * i / (FFT_SIZE - 1)));
+    }
+}
+
+// 2. 对原始数据加窗，填充为复数输入
+void apply_window_and_prepare_fft(float* input, float* output, float* window) {
+    for (int i = 0; i < FFT_SIZE; i++) {
+        output[i] = input[i] * window[i];
+    }
 }
 
 void calculate_magnitude() {
