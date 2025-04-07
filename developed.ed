@@ -18,20 +18,16 @@ float calculate_phase_diff(float *signal1, float *signal2, int maxIndex) {
     return phase_diff;  // 返回相位差
 }
 
-float calculate_thd(float *magnitude, int fft_size, float threshold) {
-    float fundamental = magnitude[1];  // 基波幅度
-    float harmonic_sum = 0.0f;
-
-    // 累加谐波（高次频率分量）
-    for (int i = 2; i < fft_size / 2; i++) {
-        if (magnitude[i] > threshold) {
-            harmonic_sum += magnitude[i] * magnitude[i];  // 计算每个谐波的幅度平方
+float calculate_thd(const float* magnitude, int fundamental_index) {
+    float v1 = magnitude[fundamental_index];
+    float sum = 0.0f;
+    for (int i = 2; i <= 6; i++) {
+        int idx = i * fundamental_index;
+        if (idx < FFT_SIZE / 2) {
+            sum += magnitude[idx] * magnitude[idx];
         }
     }
-
-    // THD计算公式
-    float thd = sqrtf(harmonic_sum) / fundamental;
-    return thd;
+    return sqrtf(sum) / v1 * 100.0f;
 }
 
 float calculate_amplitude_ratio(float *magnitude1, float *magnitude2, int maxIndex) {
@@ -43,5 +39,20 @@ float calculate_amplitude_ratio(float *magnitude1, float *magnitude2, int maxInd
         return amplitude1 / amplitude2;  // 返回幅度比值
     } else {
         return 0;  // 如果信号2的幅度为0，返回0（避免除零错误）
+    }
+}
+float window[FFT_SIZE];
+
+// 1. 生成 Hanning 窗口
+void generate_hanning_window() {
+    for (int i = 0; i < FFT_SIZE; i++) {
+        window[i] = 0.5f * (1.0f - cosf(2 * PI * i / (FFT_SIZE - 1)));
+    }
+}
+
+// 2. 对原始数据加窗，填充为复数输入
+void apply_window_and_prepare_fft(float* input, float* output, float* window) {
+    for (int i = 0; i < FFT_SIZE; i++) {
+        output[i] = input[i] * window[i];
     }
 }
