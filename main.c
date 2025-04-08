@@ -235,7 +235,7 @@ void calculate_amplitude(float* rms, float* peak) {//求幅度
         return "三角波"; // 三角波的谐波衰减较快
     }
 }*/
-const char* identify_waveform() {
+/*const char* identify_waveform() {
     int harmonic_count = 0;
 
     // 1. 找到基波索引（跳过直流分量）
@@ -269,7 +269,42 @@ const char* identify_waveform() {
         return "三角波";
     }
 }
+*/
+const char* identify_waveform() {
+    int base_index = 0;
+	int max_magnitude;
+	// 1. 寻找最大幅值对应的索引（主频索引）
+    for (int i = 2; i < FFT_SIZE / 2; i++) {
+        if (magnitude[i] > max_magnitude) {
+            max_magnitude = magnitude[i];
+            base_index = i;
+        }
+    }
+    float base = magnitude[base_index];
 
+    float total_energy = 0.0f;
+    float harmonic_energy = 0.0f;
+
+    for (int i = 1; i < size / 2; i++) {
+        float mag_sq = magnitude[i] * magnitude[i];
+        total_energy += mag_sq;
+        if (i != base_index) {
+            harmonic_energy += mag_sq;
+        }
+    }
+
+    float ratio = harmonic_energy / total_energy; // 能量占比
+
+    if (ratio < 0.05f) {
+        return "正弦波";
+    } else if (ratio > 0.2f) {
+        return "方波";
+    } else if (ratio > 0.08f && ratio < 0.18f) {
+        return "三角波";
+    } else {
+        return "未知波形";
+    }
+}
 
 /* USER CODE END 0 */
 
