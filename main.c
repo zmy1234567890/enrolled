@@ -1,35 +1,33 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
+#include "dma.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
+#include <math.h>
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "OLED.h"
 #include <stdio.h>
 #include <string.h>
-#include "arm_math.h"  // CMSIS DSP
-
+#include "arm_math.h" 
+#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+
+
+#define ADC_BUF_SIZE 1024  // FFT 输入大小（必须是 2 的幂）
+#define SAMPLING_RATE 26667  // 实际采样率，单位 Hz
+#define FFT_SIZE 1024
+#define SAMPLE_RATE 26667
+#define k 3.846
+#define M_PI 3.1415926
+#define kADC 1086
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -39,30 +37,44 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define ADC_BUF_SIZE 1024  // FFT 输入大小（必须是 2 的幂）
-#define SAMPLING_RATE 112903  // 实际采样率，单位 Hz
-float magnitude[FFT_SIZE / 2];//// 幅度数组
-float window[FFT_SIZE];//窗口数组
-
-uint32_t adc_buf[ADC_BUF_SIZE];  // ADC DMA 缓冲区
-float input_f32[ADC_BUF_SIZE];   // FFT 输入缓冲区
-float output_f32[ADC_BUF_SIZE];  // FFT 计算结果
+int max_index = 0;
+float window[FFT_SIZE];
+float phase1,phase2;
+float amplitude_ratio;
+float rms1, peak1;
+float rms2, peak2;
+int STATE=0;
+uint16_t check1[5]={0,0,0,0,0};
+uint16_t check2[5]={0,0,0,0,0};
+float magnitude1[FFT_SIZE / 2];//// 幅度数组
+float magnitude2[FFT_SIZE / 2];
+uint16_t adc_buf1[ADC_BUF_SIZE]={0,0};  // ADC DMA 缓冲区
+uint16_t adc_buf2[ADC_BUF_SIZE];
+float input11_f32[ADC_BUF_SIZE];   // FFT 输入缓冲区
+float input12_f32[ADC_BUF_SIZE]; 
+float output1_f32[ADC_BUF_SIZE];  // FFT 计算结果
+float input21_f32[ADC_BUF_SIZE];  
+float input22_f32[ADC_BUF_SIZE]; 
+float output2_f32[ADC_BUF_SIZE]; 
 arm_rfft_fast_instance_f32 fft_instance;// 定义 FFT 结构体
 char message[128];               // 串口发送缓冲区
-
 typedef struct {
     float frequency;  // 主频
     float amplitude;  // 幅值
     char waveType[10];  // 波形类型
 } SignalInfo;
-
+SignalInfo signal1;
+SignalInfo signal2;
+float values[3];
+float main_frequency2;//主频
+float main_frequency1;
+const char* waveform1;
+const char* waveform2;
+float phase_diff;
+float thd;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-ADC_HandleTypeDef hadc1;
-DMA_HandleTypeDef hdma_adc1;
-
-UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
@@ -70,144 +82,54 @@ UART_HandleTypeDef huart2;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
-static void MX_ADC1_Init(void);
-static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+//全局变量
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
-	if(hadc == &hadc1){
-
-
-		uint32_t adc_vrefint = values[2];//获取内部参考电压
-
-		// 计算实际 VDD
-		float vdd = (3.3f * (*VREFINT_CAL_ADDR)) / adc_vrefint;
-
-		        // 计算电压（修正 ADC 结果）
-		        for (int i = 0; i < 2; i++) {
-		            input_f32[i] = ((float)values[i]) * (vdd / 4096.0f);
-		        }
-
-		        process_signal(); // 进行 FFT 和分析
-	}
-}
-
-//高贵的窗口函数
-//float window[FFT_SIZE];
-
-// 1. 生成 Hanning 窗口
 void generate_hanning_window() {
     for (int i = 0; i < FFT_SIZE; i++) {
         window[i] = 0.5f * (1.0f - cosf(2 * PI * i / (FFT_SIZE - 1)));
     }
 }
-
-// 2. 对原始数据加窗，填充为复数输入
 void apply_window_and_prepare_fft(float* input, float* output, float* window) {
     for (int i = 0; i < FFT_SIZE; i++) {
         output[i] = input[i] * window[i];
     }
 }
 
-void calculate_magnitude() {
-    for (int i = 0; i < FFT_SIZE / 2; i++) {
-        float real = output_signal[2 * i];       // 实部
-        float imag = output_signal[2 * i + 1];   // 虚部
-        magnitude[i] = sqrtf(real * real + imag * imag);  // 计算幅度
-    }
-}
-
-float find_max_frequency() {
+float find_max_frequency1() {
     uint32_t maxIndex;
     float maxValue;
 
     // 找到最大幅度和对应的索引
-    arm_max_f32(magnitude, FFT_SIZE / 2, &maxValue, &maxIndex);
+    arm_max_f32(magnitude1, FFT_SIZE / 2, &maxValue, &maxIndex);
 
     // 计算主频
     float frequency = (float)maxIndex * (SAMPLE_RATE / FFT_SIZE);
     return frequency;
 }
+float find_max_frequency2() {
+    uint32_t maxIndex;
+    float maxValue;
 
-void process_signal() {
-    // **执行 FFT**
-	
-  apply_hanning_window(input, FFT_SIZE);
-    arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
-    arm_rfft_fast_f32(&fft_instance, input_signal, output_signal, 0);
+    // 找到最大幅度和对应的索引
+    arm_max_f32(magnitude2, FFT_SIZE / 2, &maxValue, &maxIndex);
 
-    // **计算幅度谱**
-    calculate_magnitude();
-
-    // **计算主频**
-    float main_frequency = find_main_frequency();
-
-    // **计算幅度**
-    float rms, peak;
-    calculate_amplitude(&rms, &peak);
-
-    // **识别波形**
-    const char* waveform = identify_waveform();
-
-    // **输出结果**
-    printf("主频: %.2f Hz\n", main_frequency);
-    printf("均方根幅度: %.2f V\n", rms);
-    printf("峰值: %.2f V\n", peak);
-    printf("波形类型: %s\n", waveform);
+    // 计算主频
+    float frequency = (float)maxIndex * (SAMPLE_RATE / FFT_SIZE);
+    return frequency;
 }
-
-void calculate_amplitude(float* rms, float* peak) {//求幅度
-    float sum_sq = 0.0f;
-    float max_val = 0.0f;
-
-    for (int i = 0; i < FFT_SIZE; i++) {
-        sum_sq += input_signal[i] * input_signal[i];  // 计算平方和
-        if (fabs(input_signal[i]) > max_val) {
-            max_val = fabs(input_signal[i]);  // 找最大值
-        }
-    }
-
-    *rms = sqrtf(sum_sq / FFT_SIZE);  // 计算均方根
-    *peak = max_val;                  // 计算峰值
-}
-
-// **4. 识别波形类型**
-/*const char* identify_waveform() {
-    int harmonic_count = 0;
-    float base_amp = magnitude[1];  // 基波幅度
-    float threshold = base_amp * 0.1f;  // 设定阈值
-
-    // 计算谐波分量
-    for (int i = 2; i < FFT_SIZE / 2; i++) {
-        if (magnitude[i] > threshold) {
-            harmonic_count++;
-        }
-    }
-
-    if (harmonic_count == 0) {
-        return "正弦波";
-    } else if (harmonic_count > 5) {
-        return "方波";
-    } else {
-        return "三角波";
-    }
-}
-*/
- /*const char* identify_waveform() {
+const char* identify_waveform1() {
     int fundamental_index = 1;
-    float max_magnitude = magnitude[1];
+    float max_magnitude = magnitude1[1];
     
     // 1. 寻找最大幅值对应的索引（主频索引）
     for (int i = 2; i < FFT_SIZE / 2; i++) {
-        if (magnitude[i] > max_magnitude) {
-            max_magnitude = magnitude[i];
+        if (magnitude1[i] > max_magnitude) {
+            max_magnitude = magnitude1[i];
             fundamental_index = i;
         }
     }
@@ -216,12 +138,12 @@ void calculate_amplitude(float* rms, float* peak) {//求幅度
     float fundamental_freq = (fundamental_index * SAMPLE_RATE) / FFT_SIZE;
     
     // 3. 设定谐波判定阈值（基波的10%）
-    float threshold = max_magnitude * 0.1f;
+    float threshold = max_magnitude * 0.3f;
     int harmonic_count = 0;
     
     // 4. 计算谐波个数（从2倍频开始判断）
     for (int i = 2 * fundamental_index; i < FFT_SIZE / 2; i += fundamental_index) {
-        if (magnitude[i] > threshold) {
+        if (magnitude1[i] > threshold) {
             harmonic_count++;
         }
     }
@@ -234,28 +156,28 @@ void calculate_amplitude(float* rms, float* peak) {//求幅度
     } else {
         return "三角波"; // 三角波的谐波衰减较快
     }
-}*/
-/*const char* identify_waveform() {
+}
+const char* identify_waveform2() {
     int harmonic_count = 0;
 
     // 1. 找到基波索引（跳过直流分量）
     int base_index = 1;
-    float base_amp = magnitude[1];
+    float base_amp = magnitude2[1];
 
     for (int i = 2; i < FFT_SIZE / 2; i++) {
-        if (magnitude[i] > base_amp) {
-            base_amp = magnitude[i];
+        if (magnitude2[i] > base_amp) {
+            base_amp = magnitude2[i];
             base_index = i;
         }
     }
 
-    float threshold = base_amp * 0.1f;
+    float threshold = base_amp * 0.05f;
 
     // 2. 判断谐波（2~5次谐波是否大于阈值）
-    for (int i = 2; i <= 5; i++) {
+    for (int i = 2; i <= 9; i++) {
         int idx = base_index * i;
         if (idx >= FFT_SIZE / 2) break;
-        if (magnitude[idx] > threshold) {
+        if (magnitude2[idx] > threshold) {
             harmonic_count++;
         }
     }
@@ -269,42 +191,252 @@ void calculate_amplitude(float* rms, float* peak) {//求幅度
         return "三角波";
     }
 }
-*/
-const char* identify_waveform() {
-    int base_index = 0;
-	int max_magnitude;
-	// 1. 寻找最大幅值对应的索引（主频索引）
-    for (int i = 2; i < FFT_SIZE / 2; i++) {
-        if (magnitude[i] > max_magnitude) {
-            max_magnitude = magnitude[i];
-            base_index = i;
-        }
-    }
-    float base = magnitude[base_index];
 
-    float total_energy = 0.0f;
-    float harmonic_energy = 0.0f;
+void calculate_amplitude1(float* rms, float* peak) {//求幅度
+    float sum_sq = 0.0f;
+    float max_val = 0.0f;
 
-    for (int i = 1; i < size / 2; i++) {
-        float mag_sq = magnitude[i] * magnitude[i];
-        total_energy += mag_sq;
-        if (i != base_index) {
-            harmonic_energy += mag_sq;
+    for (int i = 0; i < FFT_SIZE; i++) {
+        sum_sq +=  input12_f32[i] *  input12_f32[i];  // 计算平方和
+        if (fabs( (float)input12_f32[i]) > max_val) {
+            max_val = fabs((float)input12_f32[i]);  // 找最大值
         }
     }
 
-    float ratio = harmonic_energy / total_energy; // 能量占比
+    *rms = sqrtf(sum_sq / FFT_SIZE);  // 计算均方根
+    *peak = max_val/kADC;                  // 计算峰值
+}
+void calculate_amplitude2(float* rms, float* peak) {//求幅度
+    float sum_sq = 0.0f;
+    float max_val = 0.0f;
 
-    if (ratio < 0.05f) {
-        return "正弦波";
-    } else if (ratio > 0.2f) {
-        return "方波";
-    } else if (ratio > 0.08f && ratio < 0.18f) {
-        return "三角波";
-    } else {
-        return "未知波形";
+    for (int i = 0; i < FFT_SIZE; i++) {
+        sum_sq +=  input22_f32[i] *  input22_f32[i];  // 计算平方和
+        if (fabs( (float)input22_f32[i]) > max_val) {
+            max_val = fabs((float)input22_f32[i]);  // 找最大值
+        }
+    }
+
+    *rms = sqrtf(sum_sq / FFT_SIZE);  // 计算均方根
+    *peak = max_val/kADC;                  // 计算峰值
+}
+void calculate_magnitude1() {// 计算幅度
+    for (int i = 0; i < FFT_SIZE / 2; i++) {
+        float real = output1_f32[2 * i];       // 实部
+        float imag = output1_f32[2 * i + 1];   // 虚部
+        magnitude1[i] = sqrtf(real * real + imag * imag);  // 计算幅度
     }
 }
+void calculate_magnitude2() {// 计算幅度
+    for (int i = 0; i < FFT_SIZE / 2; i++) {
+        float real = output2_f32[2 * i];       // 实部
+        float imag = output2_f32[2 * i + 1];   // 虚部
+        magnitude2[i] = sqrtf(real * real + imag * imag);  // 计算幅度
+    }
+}
+float find_main_frequency1(void) {// 计算 FFT 结果中的主频率
+    float max_magnitude = 0.0f;
+    max_index = 0;
+
+    // 遍历 FFT 结果，找到最大幅值对应的索引
+    for (int i = 1; i < FFT_SIZE / 2; i++) { // 只需要遍历一半 (对称性)
+        float real = output1_f32[2 * i];     // 取实部
+        float imag = output1_f32[2 * i + 1]; // 取虚部
+        float magnitude = sqrt(real * real + imag * imag); // 计算幅值
+
+        if (magnitude > max_magnitude) {
+            max_magnitude = magnitude;
+            max_index = i;
+        }
+    }
+
+    // 计算主频率
+    float main_frequency = (max_index * SAMPLE_RATE) / FFT_SIZE;
+    return main_frequency;
+}
+float find_main_frequency2(void) {// 计算 FFT 结果中的主频率
+    float max_magnitude = 0.0f;
+    max_index = 0;
+
+    // 遍历 FFT 结果，找到最大幅值对应的索引
+    for (int i = 1; i < FFT_SIZE / 2; i++) { // 只需要遍历一半 (对称性)
+        float real = output2_f32[2 * i];     // 取实部
+        float imag = output2_f32[2 * i + 1]; // 取虚部
+        float magnitude = sqrt(real * real + imag * imag); // 计算幅值
+
+        if (magnitude > max_magnitude) {
+            max_magnitude = magnitude;
+            max_index = i;
+        }
+    }
+
+    // 计算主频率
+    float main_frequency = (max_index * SAMPLE_RATE) / FFT_SIZE;
+    return main_frequency;
+}
+void process_signal1() {
+    // **执行 FFT**
+    arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
+    arm_rfft_fast_f32(&fft_instance, input11_f32,output1_f32, 0);
+
+    // **计算幅度谱**
+    calculate_magnitude1();
+
+    // **计算主频**
+    main_frequency1 =k* find_main_frequency1();
+
+    // **计算幅度**
+ 
+    calculate_amplitude1(&rms1, &peak1);
+
+    // **识别波形**
+    waveform1 = identify_waveform1();
+
+    // **输出结果**
+    printf("n0.val=%dV\n\xff\xff\xff", (int)main_frequency1);
+    printf("峰值: %.2f V\n", peak1);
+    printf("波形类型: %s\n", waveform1);
+}
+
+void process_signal2() {
+    // **执行 FFT**
+    arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
+	  
+    arm_rfft_fast_f32(&fft_instance, input21_f32,output2_f32, 0);
+
+    // **计算幅度谱**
+    calculate_magnitude2();
+
+    // **计算主频**
+    main_frequency2 = k*find_main_frequency2();
+
+    // **计算幅度**
+   
+    calculate_amplitude2(&rms2, &peak2);
+
+    // **识别波形**
+    waveform2 = identify_waveform2();
+
+    // **输出结果**
+   printf("n1.val=%d\xff\xff\xff", (int)main_frequency2);
+    printf("均方根幅度: %.2f V\n", rms2);
+    printf("峰值: %.2f V\n", peak2);
+    printf("波形类型: %s\n", waveform2);
+}
+void trans1(){
+	for(int i=0;i<1024;i++){
+	input11_f32[i]=(float)adc_buf1[i];
+	input12_f32[i]=(float)adc_buf1[i];
+		
+}
+	}
+void trans2(){
+	for(int i=0;i<1024;i++){
+	input21_f32[i]=(float)adc_buf2[i];
+	input22_f32[i]=(float)adc_buf2[i];
+		
+  }
+}
+float calculate_amplitude_ratio(float *magnitude1, float *magnitude2, int maxIndex) {
+    float amplitude1 = magnitude1[maxIndex];  // 信号1的幅度
+    float amplitude2 = magnitude2[maxIndex];  // 信号2的幅度
+    
+    // 计算幅度比值
+    if (amplitude2 != 0) {
+        return amplitude1 / amplitude2;  // 返回幅度比值
+    } else {
+        return 0;  // 如果信号2的幅度为0，返回0（避免除零错误）
+    }
+}
+float calculate_phase_diff(float *signal1, float *signal2, int maxIndex) {
+    // 计算信号1和信号2在主频位置的相位
+   phase1 = atan2(signal1[2 * maxIndex + 1], signal1[2 * maxIndex]);
+   phase2 = atan2(signal2[2 * maxIndex + 1], signal2[2 * maxIndex]);
+    
+    // 计算相位差
+    float phase_diff = phase1 - phase2;
+    
+    // 保证相位差在[-π, π]范围内
+    if (phase_diff > M_PI) {
+        phase_diff -= 2 * M_PI;
+    } else if (phase_diff < -M_PI) {
+        phase_diff += 2 * M_PI;
+    }
+    
+    return phase_diff;  // 返回相位差
+}
+
+float calculate_thd(const float* magnitude, int fundamental_index) {
+    float v1 = magnitude[fundamental_index];
+    float sum = 0.0f;
+    for (int i = 2; i <= 6; i++) {
+        int idx = i * fundamental_index;
+        if (idx < FFT_SIZE / 2) {
+            sum += magnitude[idx] * magnitude[idx];
+        }
+    }
+    return sqrtf(sum) / v1 * 100.0f;
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){ //回调函数
+	trans2();
+	trans1();
+	for(int i=0;i<FFT_SIZE;i++){
+	printf("%f,%f\n",input11_f32[i],input21_f32[i]);
+	}
+	apply_window_and_prepare_fft(input12_f32,input11_f32,window);
+	apply_window_and_prepare_fft(input22_f32,input21_f32,window);
+	process_signal2();
+  process_signal1();
+	phase_diff=calculate_phase_diff(output1_f32,output2_f32,max_index);
+	amplitude_ratio=calculate_amplitude_ratio(magnitude1,magnitude2, max_index);
+	/*if(hadc == &hadc1&&STATE==0){
+    if(check1[4]<=10){//当CH1没有信号，重新检测
+		HAL_ADC_Start_DMA(&hadc1,(uint32_t*)check1,5);
+		}
+    if(check1[4]>10){
+			HAL_ADC_Start_DMA(&hadc2,(uint32_t*)check2,5);//当CH1有信号输入，检查是否有信号进入CH2
+		}  
+	}
+	
+	if(hadc == &hadc2&&STATE==0){//CH1有信号后走到这一步
+     if(check2[4]>=10){//CH2也有信号走向状态2，进行发展指标等判断
+			 STATE=2;
+		 }
+		 else{//CH2无信号，走向单一信号的判断
+		  STATE=1;
+		 }
+	}
+	if(hadc == &hadc1&&STATE==1){//单一信号判断
+
+    STATE=3;
+		uint32_t adc_vrefint = (uint32_t)3.3f;; //values[2];//获取内部参考电压
+
+		// 计算实际 VDD
+
+		        // 计算电压（修正 ADC 结果）
+		        for (int i = 0; i < FFT_SIZE; i++) {
+		            input1_f32[i] = ((float)adc_buf1[i]) * (3.3f / 4096.0f);//要改要改要改！！！！！！！！！！！！！！！
+		        }
+
+		        process_signal1(); // 进行 FFT 和分析
+	}
+	if(hadc == &hadc1){
+	//CH2
+	for (int i = 0; i < FFT_SIZE; i++) {
+		            input2_f32[i] = ((float)adc_buf2[i]) * (3.3f / 4096.0f);//要改要改要改！！！！！！！！！！！！！！！
+		        }
+
+		        process_signal2(); 
+	}
+	if((hadc == &hadc1||hadc == &hadc2)&&STATE==2){
+	STATE=4;
+	}*/
+}
+
+
+
+
 
 /* USER CODE END 0 */
 
@@ -325,7 +457,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+   
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -339,18 +471,40 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_USART2_UART_Init();
+  MX_TIM2_Init();
+  MX_USART1_UART_Init();
+  MX_ADC2_Init();
+	
+	
   /* USER CODE BEGIN 2 */
-
-
+	
+	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,1024);
+		HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
+	HAL_TIM_Base_Start(&htim2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_ADC_Start_DMA(&hadc1,(uint32_t*)values,sizeof(values)/sizeof(uint16_t));
+	if(STATE==1){
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
+	}
+	if(STATE==2){
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
+	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,1024);
+	}
+	if(STATE==3){
+	process_signal1();
+	}
+	if(STATE==4){
+	//此处是拓展指标代码
+	}
+	
+	
+		
 
+//		printf("hello");
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -375,12 +529,13 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 25;
-  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -401,145 +556,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief ADC1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_ADC1_Init(void)
-{
-
-  /* USER CODE BEGIN ADC1_Init 0 */
-
-  /* USER CODE END ADC1_Init 0 */
-
-  ADC_ChannelConfTypeDef sConfig = {0};
-
-  /* USER CODE BEGIN ADC1_Init 1 */
-
-  /* USER CODE END ADC1_Init 1 */
-
-  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
-  */
-  hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
-  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = ENABLE;
-  hadc1.Init.ContinuousConvMode = ENABLE;
-  hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 3;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
-  if (HAL_ADC_Init(&hadc1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
-  sConfig.Channel = ADC_CHANNEL_5;
-  sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_112CYCLES;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
-  sConfig.Channel = ADC_CHANNEL_6;
-  sConfig.Rank = 2;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
-  sConfig.Channel = ADC_CHANNEL_VREFINT;
-  sConfig.Rank = 3;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN ADC1_Init 2 */
-
-  /* USER CODE END ADC1_Init 2 */
-
-}
-
-/**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART2_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA2_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA2_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
-
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
