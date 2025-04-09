@@ -14,9 +14,9 @@ extern uint16_t ADC_DMA2[FFT_SIZE];
 
 // FFT输入输出
 float input11_f32[FFT_SIZE];   // channel 1 原始
-float input12_f32[FFT_SIZE];   // channel 1 加窗
+float input12_f32[FFT_SIZE*2];   // channel 1 加窗
 float input21_f32[FFT_SIZE];   // channel 2 原始
-float input22_f32[FFT_SIZE];   // channel 2 加窗
+float input22_f32[FFT_SIZE*2];   // channel 2 加窗
 float output1_f32[FFT_SIZE * 2];
 float output2_f32[FFT_SIZE * 2];
 
@@ -51,11 +51,17 @@ void trans2(void) {
         input21_f32[i] = (float)(ADC_DMA2[i]);
     }
 }
-void apply_window_and_prepare_fft(float* out, float* in, float* window) {
+
+// signal 为原始实数输入（如 ADC 转 float 的结果）
+// fft_input_complex 为目标数组大小必须是 FFT_SIZE * 2（实虚交错）
+void prepare_fft_input(float* fft_input_complex, float* signal, float* window) {
     for (int i = 0; i < FFT_SIZE; i++) {
-        out[i] = in[i] * window[i];
+        float sample = signal[i] * window[i];  // 应用窗函数
+        fft_input_complex[2 * i]     = sample; // 实部
+        fft_input_complex[2 * i + 1] = 0.0f;    // 虚部清零
     }
 }
+
 float find_main_frequency(float* fft_output, int* index) {
     float max_magnitude = 0.0f;
     int max_idx = 0;
@@ -149,29 +155,40 @@ const char* detect_waveform(float32_t* magnitude,int index) {
 }
 
 void process_signal1(void) {
-    arm_cfft_f32(&arm_cfft_sR_f32_len1024, input12_f32, 0, 1);  // 执行 FFT
-
-    // 主频分析，直接使用 FFT 输出
-    main_frequency1 = find_main_frequency(input12_f32, &max_index);
+    // 执行 FFT
+    arm_cfft_f32(&arm_cfft_sR_f32_len1024, input12_f32, 0, 1);  
 
     // 计算幅度谱
     arm_cmplx_mag_f32(input12_f32, magnitude1, FFT_SIZE / 2);
 
-    // Vpp 与波形识别
-    amplitude_peak1 = calculate_peak(magnitude1) / kADC;
+    // 主频分析：通过计算幅度谱的最大值索引，来得到主频
+    main_frequency1 = find_main_frequency(input12_f32, &max_index);
+
+    // Vpp 计算与波形识别
+    amplitude_peak1 = calculate_peak(magnitude1) ;
     wave1 = (char*)detect_waveform(magnitude1, max_index);
 }
 
 void process_signal2(void) {
+    // 执行 FFT
     arm_cfft_f32(&arm_cfft_sR_f32_len1024, input22_f32, 0, 1);
 
-    main_frequency2 = find_main_frequency(input22_f32, NULL);
+    // 计算幅度谱
     arm_cmplx_mag_f32(input22_f32, magnitude2, FFT_SIZE / 2);
 
-    amplitude_peak2 = calculate_peak(magnitude2) / kADC;
+    // 主频分析：通过计算幅度谱的最大值索引，来得到主频
+    main_frequency2 = find_main_frequency(input22_f32, NULL);
+
+    // Vpp 计算
+    amplitude_peak2 = calculate_peak(magnitude2);
+
+    // THD 计算
     thd = calculate_thd(magnitude2, max_index);
+
+    // 波形识别
     wave2 = (char*)detect_waveform(magnitude2, max_index);
 }
+
 
 
 void analyze_signals(void) {
