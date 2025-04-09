@@ -76,15 +76,15 @@ float find_main_frequency(float* fft_output, int* index) {
 }
 
 
-float calculate_peak(float* signal) {
-    float max_val = 0.0f;
+float calculate_vpp(uint16_t* adc_buf) {
+    uint16_t max = 0, min = 0xFFFF;
     for (int i = 0; i < FFT_SIZE; i++) {
-        if (fabs(signal[i]) > max_val) {
-            max_val = fabs(signal[i]);
-        }
+        if (adc_buf[i] > max) max = adc_buf[i];
+        if (adc_buf[i] < min) min = adc_buf[i];
     }
-    return max_val;
+    return (float)(max - min) / kADC;  // kADC 是 ADC 量化因子，转电压
 }
+
 
 float calculate_phase_diff(float* fft_output1, float* fft_output2, int index) {
     float real1 = fft_output1[2 * index];
@@ -154,7 +154,7 @@ void process_signal1(void) {
     memcpy(output1_f32, input12_f32, sizeof(float) * FFT_SIZE * 2);
 
     main_frequency1 = find_main_frequency(output1_f32, &max_index);
-    amplitude_peak1 = calculate_peak(input11_f32) / kADC;
+    amplitude_peak1 = calculate_vpp(adc_buf2) / kADC;
     thd1 = calculate_thd(magnitude1, max_index);
     wave1 = detect_waveform(magnitude1, max_index);
 }
@@ -166,7 +166,7 @@ void process_signal2(void) {
 
     main_frequency2 = find_main_frequency(output2_f32, NULL);
     amplitude_rms2 = calculate_rms(input21_f32) / kADC;
-    amplitude_peak2 = calculate_peak(input21_f32) / kADC;
+    amplitude_peak2 =  calculate_vpp(adc_buf1) / kADC;
     thd2 = calculate_thd(magnitude2, max_index);
     wave2 = detect_waveform(magnitude2, max_index);
 }
