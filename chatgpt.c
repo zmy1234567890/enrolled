@@ -6,8 +6,8 @@
 #define FFT_SIZE        1024
 #define SAMPLE_RATE     26000
 #define kADC            1086.0f  // 根据ADC量程计算，ADC值 / kADC = 电压值
-
 #define DEBUG_PRINT_INPUT 0
+#define HARMONIC_THRESHOLD 0.1
 
 extern uint16_t ADC_DMA1[FFT_SIZE];
 extern uint16_t ADC_DMA2[FFT_SIZE];
@@ -32,6 +32,8 @@ float amplitude_ratio, phase_diff;
 float thd1, thd2;
 
 int max_index = 0;
+char* wave1 = NULL;
+char* wave2 = NULL;
 
 void generate_hanning_window(void) {
     for (int i = 0; i < FFT_SIZE; i++) {
@@ -111,7 +113,7 @@ float calculate_thd(float* magnitude, int fundamental_index) {
     float thd_sum = 0.0f;
     float fundamental = magnitude[fundamental_index];
 
-    for (int i = 2; i <= 5; i++) {
+    for (int i = 2; i <= 7; i++) {
         int idx = fundamental_index * i;
         if (idx < FFT_SIZE / 2) {
             thd_sum += magnitude[idx] * magnitude[idx];
@@ -120,14 +122,14 @@ float calculate_thd(float* magnitude, int fundamental_index) {
 
     return sqrtf(thd_sum) / fundamental * 100.0f; // 百分比
 }
-const char* detect_waveform(float32_t* magnitude, uint32_t fft_size,int index) {
+const char* detect_waveform(float32_t* magnitude,int index) {
     // 选择基波
     
     float32_t base_amplitude = magnitude[index];  // 基波的幅度
     uint32_t harmonic_count = 0;                       // 谐波计数
 
     // 判断谐波和基波幅度的比例，计算超出阈值的谐波数量
-    for (uint32_t i = 2; i < fft_size / 2 && harmonic_count < MAX_HARMONICS; i++) {
+    for (uint32_t i = 2; i < FFT_SIZE / 2 && harmonic_count < MAX_HARMONICS; i++) {
         // 只考虑与基波频率的整数倍接近的谐波，简化处理
         if (magnitude[i] > base_amplitude * HARMONIC_THRESHOLD) {
             harmonic_count++;
@@ -154,7 +156,7 @@ void process_signal1(void) {
     main_frequency1 = find_main_frequency(output1_f32, &max_index);
     amplitude_peak1 = calculate_peak(input11_f32) / kADC;
     thd1 = calculate_thd(magnitude1, max_index);
-  detect_waveform(float32_t* magnitude, uint32_t fft_size,max_index)
+    wave1 = detect_waveform(magnitude1, max_index);
 }
 
 void process_signal2(void) {
@@ -166,7 +168,9 @@ void process_signal2(void) {
     amplitude_rms2 = calculate_rms(input21_f32) / kADC;
     amplitude_peak2 = calculate_peak(input21_f32) / kADC;
     thd2 = calculate_thd(magnitude2, max_index);
+    wave2 = detect_waveform(magnitude2, max_index);
 }
+
 void analyze_signals(void) {
     trans1();
     trans2();
@@ -180,8 +184,8 @@ void analyze_signals(void) {
     phase_diff = calculate_phase_diff(output1_f32, output2_f32, max_index);
     amplitude_ratio = calculate_amplitude_ratio(magnitude1, magnitude2, max_index);
 
-   
 }
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
     if (DEBUG_PRINT_INPUT) {
         for (int i = 0; i < FFT_SIZE; i++) {
