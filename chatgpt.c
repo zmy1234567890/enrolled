@@ -63,7 +63,7 @@ float find_main_frequency(float* fft_output, int* index) {
     for (int i = 1; i < FFT_SIZE / 2; i++) {
         float real = fft_output[2 * i];
         float imag = fft_output[2 * i + 1];
-        float magnitude = sqrtf(real * real + imag * imag);
+        float magnitude = real * real + imag * imag;
 
         if (magnitude > max_magnitude) {
             max_magnitude = magnitude;
@@ -149,27 +149,30 @@ const char* detect_waveform(float32_t* magnitude,int index) {
 }
 
 void process_signal1(void) {
-    arm_cfft_f32(&arm_cfft_sR_f32_len1024, input12_f32, 0, 1);
-    arm_cmplx_mag_f32(input12_f32, magnitude1, FFT_SIZE / 2);
-    memcpy(output1_f32, input12_f32, sizeof(float) * FFT_SIZE * 2);
+    arm_cfft_f32(&arm_cfft_sR_f32_len1024, input12_f32, 0, 1);  // 执行 FFT
 
-    main_frequency1 = find_main_frequency(output1_f32, &max_index);
-    amplitude_peak1 = calculate_vpp(adc_buf2) / kADC;
-    thd1 = calculate_thd(magnitude1, max_index);
-    wave1 = detect_waveform(magnitude1, max_index);
+    // 主频分析，直接使用 FFT 输出
+    main_frequency1 = find_main_frequency(input12_f32, &max_index);
+
+    // 计算幅度谱
+    arm_cmplx_mag_f32(input12_f32, magnitude1, FFT_SIZE / 2);
+
+    // Vpp 与波形识别
+    amplitude_peak1 = calculate_peak(magnitude1) / kADC;
+    wave1 = (char*)detect_waveform(magnitude1, max_index);
 }
 
 void process_signal2(void) {
     arm_cfft_f32(&arm_cfft_sR_f32_len1024, input22_f32, 0, 1);
-    arm_cmplx_mag_f32(input22_f32, magnitude2, FFT_SIZE / 2);
-    memcpy(output2_f32, input22_f32, sizeof(float) * FFT_SIZE * 2);
 
-    main_frequency2 = find_main_frequency(output2_f32, NULL);
-    amplitude_rms2 = calculate_rms(input21_f32) / kADC;
-    amplitude_peak2 =  calculate_vpp(adc_buf1) / kADC;
-    thd2 = calculate_thd(magnitude2, max_index);
-    wave2 = detect_waveform(magnitude2, max_index);
+    main_frequency2 = find_main_frequency(input22_f32, NULL);
+    arm_cmplx_mag_f32(input22_f32, magnitude2, FFT_SIZE / 2);
+
+    amplitude_peak2 = calculate_peak(magnitude2) / kADC;
+    thd = calculate_thd(magnitude2, max_index);
+    wave2 = (char*)detect_waveform(magnitude2, max_index);
 }
+
 
 void analyze_signals(void) {
     trans1();
