@@ -157,40 +157,45 @@ const char* identify_waveform1() {
         return "三角波"; // 三角波的谐波衰减较快
     }
 }
-const char* identify_waveform2() {
+#include <math.h>
+
+#define FFT_SIZE 1024
+
+extern float magnitude2[FFT_SIZE / 2];  // 假设这是存储频谱幅度的数组
+
+// 基于 THD 判断波形类型
+const char* identify_waveform_by_thd() {
     int harmonic_count = 0;
+    float base_amp = magnitude2[1];  // 基波幅度
+    float harmonic_sum = 0.0f;
 
-    // 1. 找到基波索引（跳过直流分量）
-    int base_index = 1;
-    float base_amp = magnitude2[1];
-
+    // 1. 找到基波幅度并计算 THD
     for (int i = 2; i < FFT_SIZE / 2; i++) {
         if (magnitude2[i] > base_amp) {
             base_amp = magnitude2[i];
-            base_index = i;
         }
     }
 
-    float threshold = base_amp * 0.05f;
-
-    // 2. 判断谐波（2~9次谐波是否大于阈值）
+    // 2. 计算谐波分量（2~9 次谐波）
     for (int i = 2; i <= 9; i++) {
-        int idx = base_index * i;
+        int idx = i;  // 对应的谐波索引
         if (idx >= FFT_SIZE / 2) break;
-        if (magnitude2[idx] > threshold) {
-            harmonic_count++;
-        }
+        harmonic_sum += magnitude2[idx] * magnitude2[idx];  // 求平方和
     }
 
-    // 3. 识别波形
-    if (harmonic_count == 0) {
-        return "正弦波";
-    } else if (harmonic_count >= 3) {
-        return "方波";
+    // 3. 计算总谐波失真（THD）
+    float thd = sqrt(harmonic_sum) / base_amp;
+
+    // 4. 根据 THD 判断波形类型
+    if (thd < 0.1f) {
+        return "正弦波";  // THD 较小，表示是正弦波
+    } else if (thd >= 0.5f) {
+        return "方波";  // THD 较大，表示是方波
     } else {
-        return "三角波";
+        return "三角波";  // THD 适中，表示是三角波
     }
 }
+
 
 void calculate_amplitude1(float* rms, float* peak) {//求幅度
     float sum_sq = 0.0f;
