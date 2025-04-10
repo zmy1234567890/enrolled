@@ -1,22 +1,34 @@
 #include <math.h>
 
-float calculate_phase_diff(float *signal1, float *signal2, int maxIndex) {
-    // 计算信号1和信号2在主频位置的相位
-    float phase1 = atan2(signal1[2 * maxIndex + 1], signal1[2 * maxIndex]);
-    float phase2 = atan2(signal2[2 * maxIndex + 1], signal2[2 * maxIndex]);
+// 计算两个信号的交叉相关
+float cross_correlation(float* signal1, float* signal2, ) {
+    float max_corr = 0;
+    int max_idx = 0;
     
-    // 计算相位差
-    float phase_diff = phase1 - phase2;
-    
-    // 保证相位差在[-π, π]范围内
-    if (phase_diff > M_PI) {
-        phase_diff -= 2 * M_PI;
-    } else if (phase_diff < -M_PI) {
-        phase_diff += 2 * M_PI;
+    // 计算交叉相关
+    for (int i = 0; i < FFT_SIZE; i++) {
+        float corr = 0;
+        for (int j = 0; j < FFT_SIZE - i; j++) {
+            corr += signal1[j] * signal2[j + i];
+        }
+        
+        if (corr > max_corr) {
+            max_corr = corr;
+            max_idx = i;
+        }
     }
-    
-    return phase_diff;  // 返回相位差
+
+    return max_idx;
 }
+
+// 计算信号相位差
+float calculate_phase_diff_cross_correlation(float* signal1, float* signal2) {
+    int shift_samples = cross_correlation(signal1, signal2);
+    
+    // 根据交叉相关的延迟计算相位差
+    return (shift_samples / (float)size) * 2 * M_PI;
+}
+
 
 float calculate_thd(const float* magnitude, int fundamental_index) {
     float v1 = magnitude[fundamental_index];
