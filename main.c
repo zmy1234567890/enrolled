@@ -239,26 +239,37 @@ void calculate_magnitude2() {// 计算幅度
         magnitude2[i] = sqrtf(real * real + imag * imag);  // 计算幅度
     }
 }
-float find_main_frequency1(void) {// 计算 FFT 结果中的主频率
-    float max_magnitude = 0.0f;
-    max_index = 0;
+float find_main_frequency_interp(const float *fft_output) {
+    int max_index = 0;
+    float max_mag_sq = 0.0f;
 
-    // 遍历 FFT 结果，找到最大幅值对应的索引
-    for (int i = 1; i < FFT_SIZE / 2; i++) { // 只需要遍历一半 (对称性)
-        float real = output1_f32[2 * i];     // 取实部
-        float imag = output1_f32[2 * i + 1]; // 取虚部
-        float magnitude = sqrt(real * real + imag * imag); // 计算幅值
+    // 遍历 FFT 结果，找最大幅值点（忽略第0点直流分量）
+    for (int i = 1; i < FFT_SIZE/ 2 - 1; i++) {
+        float real = fft_output[2 * i];
+        float imag = fft_output[2 * i + 1];
+        float mag_sq = real * real + imag * imag;
 
-        if (magnitude > max_magnitude) {
-            max_magnitude = magnitude;
+        if (mag_sq > max_mag_sq) {
+            max_mag_sq = mag_sq;
             max_index = i;
         }
     }
 
-    // 计算主频率
-    float main_frequency = (max_index * SAMPLE_RATE) / FFT_SIZE;
+    // 取左右邻点幅值平方（避免边界溢出）
+    float mag_left = fft_output[2 * (max_index - 1)] * fft_output[2 * (max_index - 1)] +
+                     fft_output[2 * (max_index - 1) + 1] * fft_output[2 * (max_index - 1) + 1];
+    float mag_center = max_mag_sq;
+    float mag_right = fft_output[2 * (max_index + 1)] * fft_output[2 * (max_index + 1)] +
+                      fft_output[2 * (max_index + 1) + 1] * fft_output[2 * (max_index + 1) + 1];
+
+    // 抛物线插值偏移
+    float delta = 0.5f * (mag_left - mag_right) / (mag_left - 2 * mag_center + mag_right);
+
+    // 返回主频（带插值）
+    float main_frequency = ((float)max_index + delta) * SAMPLE_RATE / FFT_SIZE;
     return main_frequency;
 }
+
 float find_main_frequency2(void) {// 计算 FFT 结果中的主频率
     float max_magnitude = 0.0f;
     max_index = 0;
