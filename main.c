@@ -157,6 +157,42 @@ const char* identify_waveform1() {
         return "三角波"; // 三角波的谐波衰减较快
     }
 }
+const char* detect_waveform_type(const float magnitude[]) {
+    int max_index = 1;
+    float max_mag = magnitude[1];
+
+    // 找主频所在 bin
+    for (int i = 2; i < fft_size / 2; i++) {
+        if (magnitude[i] > max_mag) {
+            max_mag = magnitude[i];
+            max_index = i;
+        }
+    }
+
+    // 获取主频的幅值
+    float f0_mag = magnitude[max_index];
+    float f3_mag =  magnitude[3 * max_index] ;
+    float f5_mag =  magnitude[5 * max_index] ;
+    float f7_mag =  magnitude[7 * max_index] ;
+
+    // 归一化谐波比值
+    float h3 = f3_mag / f0_mag;
+    float h5 = f5_mag / f0_mag;
+    float h7 = f7_mag / f0_mag;
+
+    // ---- 规则判断 ----
+    if (h3 < 0.05 && h5 < 0.05 && h7 < 0.05) {
+        return "正弦波"; // 正弦波，谐波几乎没有
+    }
+    else if (h3 > 0.1 && h5 > 0.05 && h7 > 0.02) {
+        return "方波"; // 方波，奇次谐波衰减慢
+    }
+    else if (h3 > 0.01 && h3 < 0.1 && h5 > 0.005 && h5 < 0.05 && h7 < 0.02) {
+        return "三角波"; // 三角波，奇次谐波衰减快
+    }
+   
+    }
+}
 #include <math.h>
 
 #define FFT_SIZE 1024
