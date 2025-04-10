@@ -173,7 +173,7 @@ const char* identify_waveform2() {
 
     float threshold = base_amp * 0.05f;
 
-    // 2. 判断谐波（2~5次谐波是否大于阈值）
+    // 2. 判断谐波（2~9次谐波是否大于阈值）
     for (int i = 2; i <= 9; i++) {
         int idx = base_index * i;
         if (idx >= FFT_SIZE / 2) break;
