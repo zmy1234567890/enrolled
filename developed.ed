@@ -68,3 +68,21 @@ void apply_window_and_prepare_fft(float* input, float* output, float* window) {
         output[i] = input[i] * window[i];
     }
 }
+
+
+
+float estimate_vpp_rfft(float* magnitude,int max_index) {
+   
+
+    // 多频点能量叠加
+    float energy = 0.0f;
+    for (int i = max_index - 3; i <= max_index + 3; i++) {
+        if (i >= 1 && i < FFT_SIZE / 2) {
+            energy += magnitude[i] * magnitude[i];
+        }
+    }
+
+    // 能量估算 Vpp（经验式：sqrt(2E) * 2）
+    float vpp = 2.0f * sqrtf(energy);
+    return vpp;
+}
